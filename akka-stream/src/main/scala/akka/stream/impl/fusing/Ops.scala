@@ -19,7 +19,7 @@ private[akka] final case class Map[In, Out](f: In ⇒ Out, decider: Supervision.
   override def decide(t: Throwable): Supervision.Directive = decider(t)
 
   // FIXME new instance not needed for Map, only experimenting now
-  override def restart(t: Throwable): Map[In, Out] = new Map(f, decider)
+  override def restart(): Map[In, Out] = new Map(f, decider)
 }
 
 /**

@@ -248,6 +248,17 @@ private[akka] class OneBoundedInterpreter(ops: Seq[Stage[_, _]], val forkLimit: 
       null
     }
 
+    def resume(): Unit = {
+      state.pull()
+      state.advance()
+    }
+
+    def restart(): Unit = {
+      pipeline(activeOpIndex) = pipeline(activeOpIndex).restart().asInstanceOf[UntypedOp]
+      state.pull()
+      state.advance()
+    }
+
     override def hold(): FreeDirective = {
       if (currentOp.holding) throw new IllegalStateException("Cannot hold while already holding")
       currentOp.holding = true
@@ -399,7 +410,6 @@ private[akka] class OneBoundedInterpreter(ops: Seq[Stage[_, _]], val forkLimit: 
         state.progress()
       } catch {
         case NonFatal(e) if lastOpFailing != activeOpIndex ⇒
-          if (Debug) printDebug()
           lastOpFailing = activeOpIndex
           currentOp.decide(e) match {
             case Supervision.Stop ⇒
@@ -408,14 +418,10 @@ private[akka] class OneBoundedInterpreter(ops: Seq[Stage[_, _]], val forkLimit: 
             case Supervision.Resume ⇒
               println(s"# resume [$activeOpIndex]: $e") // FIXME
               // FIXME do we have to keep track of if user called ctx.push and exception was thrown afterwards
-              // FIXME `pull` can also throw
-              state.pull()
-              state.advance()
+              state.resume()
             case Supervision.Restart ⇒
               println(s"# restart [$activeOpIndex]: $e") // FIXME
-              pipeline(activeOpIndex) = pipeline(activeOpIndex).restart(e).asInstanceOf[UntypedOp]
-              state.pull()
-              state.advance()
+              state.restart()
           }
       }
     }

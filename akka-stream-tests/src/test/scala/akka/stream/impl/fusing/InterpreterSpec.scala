@@ -5,8 +5,36 @@ package akka.stream.impl.fusing
 
 import scala.util.control.NoStackTrace
 import akka.stream.Supervision
+import akka.stream.stage.PushPullStage
+import akka.stream.stage.Context
+import akka.stream.stage.Directive
+import akka.stream.stage.Stage
+import akka.stream.stage.PushStage
+
+object InterpreterSpec {
+  class RestartTestStage extends PushPullStage[Int, Int] {
+    var sum = 0
+    def onPush(elem: Int, ctx: Context[Int]): Directive = {
+      sum += elem
+      ctx.push(sum)
+    }
+
+    override def onPull(ctx: Context[Int]): Directive = {
+      ctx.pull()
+    }
+
+    override def decide(t: Throwable): Supervision.Directive = Supervision.Restart
+
+    override def restart(): Stage[Int, Int] = {
+      sum = 0
+      this
+    }
+
+  }
+}
 
 class InterpreterSpec extends InterpreterSpecKit {
+  import InterpreterSpec._
   import Supervision.stoppingDecider
   import Supervision.resumingDecider
   import Supervision.restartingDecider
@@ -510,9 +538,9 @@ class InterpreterSpec extends InterpreterSpecKit {
     }
 
     "resume when op throws in middle of the chain" in new TestSetup(Seq(
-      Map((x: Int) ⇒ x + 1, restartingDecider),
-      Map((x: Int) ⇒ if (x == 0) throw TE else x + 10, restartingDecider),
-      Map((x: Int) ⇒ x + 100, restartingDecider))) {
+      Map((x: Int) ⇒ x + 1, resumingDecider),
+      Map((x: Int) ⇒ if (x == 0) throw TE else x + 10, resumingDecider),
+      Map((x: Int) ⇒ x + 100, resumingDecider))) {
 
       lastEvents() should be(Set.empty)
 
@@ -533,6 +561,116 @@ class InterpreterSpec extends InterpreterSpecKit {
 
       upstream.onNext(3)
       lastEvents() should be(Set(OnNext(114)))
+    }
+
+    "restart when onPush throws" in {
+      val stage = new RestartTestStage {
+        override def onPush(elem: Int, ctx: Context[Int]): Directive = {
+          if (elem <= 0) throw TE
+          else super.onPush(elem, ctx)
+        }
+      }
+
+      new TestSetup(Seq(
+        Map((x: Int) ⇒ x + 1, restartingDecider),
+        stage,
+        Map((x: Int) ⇒ x + 100, restartingDecider))) {
+
+        lastEvents() should be(Set.empty)
+
+        downstream.requestOne()
+        lastEvents() should be(Set(RequestOne))
+
+        upstream.onNext(2)
+        lastEvents() should be(Set(OnNext(103)))
+
+        downstream.requestOne()
+        lastEvents() should be(Set(RequestOne))
+
+        upstream.onNext(-1)
+        lastEvents() should be(Set.empty)
+
+        downstream.requestOne()
+        lastEvents() should be(Set(RequestOne))
+
+        upstream.onNext(3)
+        lastEvents() should be(Set(OnNext(104)))
+      }
+    }
+
+    "restart when onPush throws after ctx.push" in {
+      val stage = new RestartTestStage {
+        override def onPush(elem: Int, ctx: Context[Int]): Directive = {
+          val ret = ctx.push(sum)
+          super.onPush(elem, ctx)
+          if (elem <= 0) throw TE
+          ret
+        }
+      }
+
+      new TestSetup(Seq(
+        Map((x: Int) ⇒ x + 1, restartingDecider),
+        stage,
+        Map((x: Int) ⇒ x + 100, restartingDecider))) {
+
+        lastEvents() should be(Set.empty)
+
+        downstream.requestOne()
+        lastEvents() should be(Set(RequestOne))
+
+        upstream.onNext(2)
+        lastEvents() should be(Set(OnNext(103)))
+
+        downstream.requestOne()
+        lastEvents() should be(Set(RequestOne))
+
+        upstream.onNext(-1)
+        lastEvents() should be(Set.empty)
+
+        downstream.requestOne()
+        lastEvents() should be(Set(RequestOne))
+
+        upstream.onNext(3)
+        lastEvents() should be(Set(OnNext(104)))
+      }
+    }
+
+    "restart when onPull throws" in {
+      val stage = new RestartTestStage {
+        override def onPull(ctx: Context[Int]): Directive = {
+          if (sum < 0) throw TE
+          super.onPull(ctx)
+        }
+      }
+
+      new TestSetup(Seq(
+        Map((x: Int) ⇒ x + 1, restartingDecider),
+        stage,
+        Map((x: Int) ⇒ x + 100, restartingDecider))) {
+
+        lastEvents() should be(Set.empty)
+
+        downstream.requestOne()
+        lastEvents() should be(Set(RequestOne))
+
+        upstream.onNext(2)
+        lastEvents() should be(Set(OnNext(103)))
+
+        downstream.requestOne()
+        lastEvents() should be(Set(RequestOne))
+
+        upstream.onNext(-5)
+        lastEvents() should be(Set(OnNext(99)))
+
+        downstream.requestOne()
+        lastEvents() should be(Set.empty)
+
+        downstream.requestOne()
+        lastEvents() should be(Set(RequestOne))
+
+        upstream.onNext(3)
+        lastEvents() should be(Set(OnNext(104)))
+      }
     }
 
     "work with keep-going ops" in pending

@@ -90,7 +90,7 @@ private[stream] abstract class AbstractStage[-In, Out, PushD <: Directive, PullD
   // FIXME name? document!
   def decide(t: Throwable): Supervision.Directive = Supervision.Stop
 
-  def restart(t: Throwable): Stage[In, Out] = this
+  def restart(): Stage[In, Out] = this
 
 }
 
