@@ -17,9 +17,6 @@ private[akka] final case class Map[In, Out](f: In ⇒ Out, decider: Supervision.
 
   // FIXME move to PushPullStage
   override def decide(t: Throwable): Supervision.Directive = decider(t)
-
-  // FIXME new instance not needed for Map, only experimenting now
-  override def restart(): Map[In, Out] = new Map(f, decider)
 }
 
 /**
@@ -236,12 +233,14 @@ private[akka] final case class Completed[T]() extends PushPullStage[T, T] {
 /**
  * INTERNAL API
  */
-private[akka] final case class Conflate[In, Out](seed: In ⇒ Out, aggregate: (Out, In) ⇒ Out) extends DetachedStage[In, Out] {
+private[akka] final case class Conflate[In, Out](seed: In ⇒ Out, aggregate: (Out, In) ⇒ Out,
+                                                 decider: Supervision.Decider) extends DetachedStage[In, Out] {
   private var agg: Any = null
 
   override def onPush(elem: In, ctx: DetachedContext[Out]): UpstreamDirective = {
-    agg = if (agg == null) seed(elem)
-    else aggregate(agg.asInstanceOf[Out], elem)
+    agg =
+      if (agg == null) seed(elem)
+      else aggregate(agg.asInstanceOf[Out], elem)
 
     if (!ctx.isHolding) ctx.pull()
     else {
@@ -262,12 +261,19 @@ private[akka] final case class Conflate[In, Out](seed: In ⇒ Out, aggregate: (O
     } else if (agg == null) ctx.hold()
     else {
       val result = agg.asInstanceOf[Out]
+      if (result == null) throw new NullPointerException
       agg = null
       ctx.push(result)
     }
   }
 
   override def onUpstreamFinish(ctx: DetachedContext[Out]): TerminationDirective = ctx.absorbTermination()
+
+  // FIXME move to DetachedStage
+  override def decide(t: Throwable): Supervision.Directive = decider(t)
+
+  // FIXME new instance not needed for Map, only experimenting now
+  override def restart(): Conflate[In, Out] = copy()
 }
 
 /**

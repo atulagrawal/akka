@@ -249,14 +249,12 @@ private[akka] class OneBoundedInterpreter(ops: Seq[Stage[_, _]], val forkLimit: 
     }
 
     def resume(): Unit = {
-      state.pull()
-      state.advance()
+      pull()
     }
 
     def restart(): Unit = {
       pipeline(activeOpIndex) = pipeline(activeOpIndex).restart().asInstanceOf[UntypedOp]
-      state.pull()
-      state.advance()
+      pull()
     }
 
     override def hold(): FreeDirective = {

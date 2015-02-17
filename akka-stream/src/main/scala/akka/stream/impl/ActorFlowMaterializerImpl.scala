@@ -324,7 +324,7 @@ case class ActorFlowMaterializerImpl(
           case Ast.Collect(pf, _)               ⇒ fusing.Collect(pf) :: prev
           case Ast.Scan(z, f, _)                ⇒ fusing.Scan(z, f) :: prev
           case Ast.Expand(s, f, _)              ⇒ fusing.Expand(s, f) :: prev
-          case Ast.Conflate(s, f, _)            ⇒ fusing.Conflate(s, f) :: prev
+          case Ast.Conflate(s, f, att)          ⇒ fusing.Conflate(s, f, att.settings(settings).supervisionDecider) :: prev
           case Ast.Buffer(n, s, _)              ⇒ fusing.Buffer(n, s) :: prev
           case Ast.MapConcat(f, _)              ⇒ fusing.MapConcat(f) :: prev
           case Ast.Grouped(n, _)                ⇒ fusing.Grouped(n) :: prev
@@ -358,6 +358,8 @@ case class ActorFlowMaterializerImpl(
   // Ops come in reverse order
   override def materialize[In, Out](source: Source[In], sink: Sink[Out], rawOps: List[Ast.AstNode], keys: List[Key[_]]): MaterializedMap = {
     val flowName = createFlowName() //FIXME: Creates Id even when it is not used in all branches below
+
+    println(s"# materialize $rawOps") // FIXME
 
     def throwUnknownType(typeName: String, s: AnyRef): Nothing =
       throw new MaterializationException(s"unknown $typeName type ${s.getClass}")
@@ -553,18 +555,23 @@ private[akka] object ActorProcessorFactory {
 
   import Ast._
   def props(materializer: ActorFlowMaterializer, op: AstNode): Props = {
+
+    println(s"# ActorProcessorFactory.props: $op ") // FIXME
+
     val settings = materializer.settings // USE THIS TO AVOID CLOSING OVER THE MATERIALIZER BELOW
     op match {
-      case Fused(ops, _)              ⇒ ActorInterpreter.props(settings, ops)
+      case Fused(ops, _) ⇒ ActorInterpreter.props(settings, ops)
       // FIXME this way of grabbing the supervisionDecider feels very inefficient
-      case Map(f, att)                ⇒ ActorInterpreter.props(settings, List(fusing.Map(f, att.settings(settings).supervisionDecider)))
-      case Filter(p, _)               ⇒ ActorInterpreter.props(settings, List(fusing.Filter(p)))
-      case Drop(n, _)                 ⇒ ActorInterpreter.props(settings, List(fusing.Drop(n)))
-      case Take(n, _)                 ⇒ ActorInterpreter.props(settings, List(fusing.Take(n)))
-      case Collect(pf, _)             ⇒ ActorInterpreter.props(settings, List(fusing.Collect(pf)))
-      case Scan(z, f, _)              ⇒ ActorInterpreter.props(settings, List(fusing.Scan(z, f)))
-      case Expand(s, f, _)            ⇒ ActorInterpreter.props(settings, List(fusing.Expand(s, f)))
-      case Conflate(s, f, _)          ⇒ ActorInterpreter.props(settings, List(fusing.Conflate(s, f)))
+      case Map(f, att) ⇒
+        ActorInterpreter.props(settings, List(fusing.Map(f, att.settings(settings).supervisionDecider)))
+      case Filter(p, _)    ⇒ ActorInterpreter.props(settings, List(fusing.Filter(p)))
+      case Drop(n, _)      ⇒ ActorInterpreter.props(settings, List(fusing.Drop(n)))
+      case Take(n, _)      ⇒ ActorInterpreter.props(settings, List(fusing.Take(n)))
+      case Collect(pf, _)  ⇒ ActorInterpreter.props(settings, List(fusing.Collect(pf)))
+      case Scan(z, f, _)   ⇒ ActorInterpreter.props(settings, List(fusing.Scan(z, f)))
+      case Expand(s, f, _) ⇒ ActorInterpreter.props(settings, List(fusing.Expand(s, f)))
+      case Conflate(s, f, att) ⇒
+        ActorInterpreter.props(settings, List(fusing.Conflate(s, f, att.settings(settings).supervisionDecider)))
       case Buffer(n, s, _)            ⇒ ActorInterpreter.props(settings, List(fusing.Buffer(n, s)))
       case MapConcat(f, _)            ⇒ ActorInterpreter.props(settings, List(fusing.MapConcat(f)))
       case MapAsync(f, _)             ⇒ MapAsyncProcessorImpl.props(settings, f)

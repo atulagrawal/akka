@@ -95,7 +95,8 @@ class InterpreterStressSpec extends InterpreterSpecKit {
 
     "work with a massive chain of conflates by overflowing to the heap" in new TestSetup(Seq.fill(100000)(Conflate(
       (in: Int) ⇒ in,
-      (agg: Int, in: Int) ⇒ agg + in)),
+      (agg: Int, in: Int) ⇒ agg + in,
+      Supervision.stoppingDecider)),
       forkLimit = 100,
       overflowToHeap = true) {
 

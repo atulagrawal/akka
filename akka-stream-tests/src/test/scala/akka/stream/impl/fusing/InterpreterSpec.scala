@@ -263,7 +263,8 @@ class InterpreterSpec extends InterpreterSpecKit {
 
     "implement conflate" in new TestSetup(Seq(Conflate(
       (in: Int) ⇒ in,
-      (agg: Int, x: Int) ⇒ agg + x))) {
+      (agg: Int, x: Int) ⇒ agg + x,
+      stoppingDecider))) {
 
       lastEvents() should be(Set(RequestOne))
 
@@ -323,10 +324,12 @@ class InterpreterSpec extends InterpreterSpecKit {
     "work with conflate-conflate" in new TestSetup(Seq(
       Conflate(
         (in: Int) ⇒ in,
-        (agg: Int, x: Int) ⇒ agg + x),
+        (agg: Int, x: Int) ⇒ agg + x,
+        stoppingDecider),
       Conflate(
         (in: Int) ⇒ in,
-        (agg: Int, x: Int) ⇒ agg + x))) {
+        (agg: Int, x: Int) ⇒ agg + x,
+        stoppingDecider))) {
 
       lastEvents() should be(Set(RequestOne))
 
@@ -396,7 +399,8 @@ class InterpreterSpec extends InterpreterSpecKit {
     "implement conflate-expand" in new TestSetup(Seq(
       Conflate(
         (in: Int) ⇒ in,
-        (agg: Int, x: Int) ⇒ agg + x),
+        (agg: Int, x: Int) ⇒ agg + x,
+        stoppingDecider),
       Expand(
         (in: Int) ⇒ in,
         (agg: Int) ⇒ (agg, agg)))) {
@@ -437,7 +441,8 @@ class InterpreterSpec extends InterpreterSpecKit {
       Doubler(),
       Conflate(
         (in: Int) ⇒ in,
-        (agg: Int, x: Int) ⇒ agg + x))) {
+        (agg: Int, x: Int) ⇒ agg + x,
+        stoppingDecider))) {
       lastEvents() should be(Set(RequestOne))
 
       upstream.onNext(1)
@@ -479,19 +484,17 @@ class InterpreterSpec extends InterpreterSpecKit {
 
     }
 
-    "report failure when op throws" in new TestSetup(Seq(Map((x: Int) ⇒ if (x == 0) throw TE else x, stoppingDecider))) {
+    "emit failure when op throws" in new TestSetup(Seq(Map((x: Int) ⇒ if (x == 0) throw TE else x, stoppingDecider))) {
       lastEvents() should be(Set.empty)
 
       downstream.requestOne()
       lastEvents() should be(Set(RequestOne))
-
       upstream.onNext(2)
       lastEvents() should be(Set(OnNext(2)))
 
       downstream.requestOne()
       lastEvents() should be(Set(RequestOne))
-
-      upstream.onNext(0)
+      upstream.onNext(0) // boom
       lastEvents() should be(Set(Cancel, OnError(TE)))
     }
 
@@ -500,24 +503,21 @@ class InterpreterSpec extends InterpreterSpecKit {
 
       downstream.requestOne()
       lastEvents() should be(Set(RequestOne))
-
       upstream.onNext(2)
       lastEvents() should be(Set(OnNext(2)))
 
       downstream.requestOne()
       lastEvents() should be(Set(RequestOne))
-
-      upstream.onNext(0)
-      lastEvents() should be(Set.empty)
+      upstream.onNext(0) // boom
+      lastEvents() should be(Set(RequestOne))
 
       downstream.requestOne()
       lastEvents() should be(Set(RequestOne))
-
       upstream.onNext(3)
       lastEvents() should be(Set(OnNext(3)))
     }
 
-    "report failure when op throws in middle of the chain" in new TestSetup(Seq(
+    "emit failure when op throws in middle of the chain" in new TestSetup(Seq(
       Map((x: Int) ⇒ x + 1, stoppingDecider),
       Map((x: Int) ⇒ if (x == 0) throw TE else x + 10, stoppingDecider),
       Map((x: Int) ⇒ x + 100, stoppingDecider))) {
@@ -526,14 +526,12 @@ class InterpreterSpec extends InterpreterSpecKit {
 
       downstream.requestOne()
       lastEvents() should be(Set(RequestOne))
-
       upstream.onNext(2)
       lastEvents() should be(Set(OnNext(113)))
 
       downstream.requestOne()
       lastEvents() should be(Set(RequestOne))
-
-      upstream.onNext(-1)
+      upstream.onNext(-1) // boom
       lastEvents() should be(Set(Cancel, OnError(TE)))
     }
 
@@ -546,21 +544,62 @@ class InterpreterSpec extends InterpreterSpecKit {
 
       downstream.requestOne()
       lastEvents() should be(Set(RequestOne))
-
       upstream.onNext(2)
       lastEvents() should be(Set(OnNext(113)))
 
       downstream.requestOne()
       lastEvents() should be(Set(RequestOne))
+      upstream.onNext(-1) // boom
+      lastEvents() should be(Set(RequestOne))
 
-      upstream.onNext(-1)
+      downstream.requestOne()
+      lastEvents() should be(Set(RequestOne))
+      upstream.onNext(3)
+      lastEvents() should be(Set(OnNext(114)))
+    }
+
+    "resume when op throws before grouped" in new TestSetup(Seq(
+      Map((x: Int) ⇒ x + 1, resumingDecider),
+      Map((x: Int) ⇒ if (x <= 0) throw TE else x + 10, resumingDecider),
+      Grouped(3))) {
+
       lastEvents() should be(Set.empty)
 
       downstream.requestOne()
       lastEvents() should be(Set(RequestOne))
+      upstream.onNext(2)
+      lastEvents() should be(Set(RequestOne))
+
+      upstream.onNext(-1) // boom
+      lastEvents() should be(Set(RequestOne))
 
       upstream.onNext(3)
-      lastEvents() should be(Set(OnNext(114)))
+      lastEvents() should be(Set(RequestOne))
+
+      upstream.onNext(4)
+      lastEvents() should be(Set(OnNext(Vector(13, 14, 15))))
+    }
+
+    "complete after resume when op throws before grouped" in new TestSetup(Seq(
+      Map((x: Int) ⇒ x + 1, resumingDecider),
+      Map((x: Int) ⇒ if (x <= 0) throw TE else x + 10, resumingDecider),
+      Grouped(1000))) {
+
+      lastEvents() should be(Set.empty)
+
+      downstream.requestOne()
+      lastEvents() should be(Set(RequestOne))
+      upstream.onNext(2)
+      lastEvents() should be(Set(RequestOne))
+
+      upstream.onNext(-1) // boom
+      lastEvents() should be(Set(RequestOne))
+
+      upstream.onNext(3)
+      lastEvents() should be(Set(RequestOne))
+
+      upstream.onComplete()
+      lastEvents() should be(Set(OnNext(Vector(13, 14)), OnComplete))
     }
 
     "restart when onPush throws" in {
@@ -580,19 +619,16 @@ class InterpreterSpec extends InterpreterSpecKit {
 
         downstream.requestOne()
         lastEvents() should be(Set(RequestOne))
-
         upstream.onNext(2)
         lastEvents() should be(Set(OnNext(103)))
 
         downstream.requestOne()
         lastEvents() should be(Set(RequestOne))
-
-        upstream.onNext(-1)
-        lastEvents() should be(Set.empty)
+        upstream.onNext(-1) // boom
+        lastEvents() should be(Set(RequestOne))
 
         downstream.requestOne()
         lastEvents() should be(Set(RequestOne))
-
         upstream.onNext(3)
         lastEvents() should be(Set(OnNext(104)))
       }
@@ -617,19 +653,16 @@ class InterpreterSpec extends InterpreterSpecKit {
 
         downstream.requestOne()
         lastEvents() should be(Set(RequestOne))
-
         upstream.onNext(2)
         lastEvents() should be(Set(OnNext(103)))
 
         downstream.requestOne()
         lastEvents() should be(Set(RequestOne))
-
-        upstream.onNext(-1)
-        lastEvents() should be(Set.empty)
+        upstream.onNext(-1) // boom
+        lastEvents() should be(Set(RequestOne))
 
         downstream.requestOne()
         lastEvents() should be(Set(RequestOne))
-
         upstream.onNext(3)
         lastEvents() should be(Set(OnNext(104)))
       }
@@ -652,25 +685,129 @@ class InterpreterSpec extends InterpreterSpecKit {
 
         downstream.requestOne()
         lastEvents() should be(Set(RequestOne))
-
         upstream.onNext(2)
         lastEvents() should be(Set(OnNext(103)))
 
         downstream.requestOne()
         lastEvents() should be(Set(RequestOne))
-
-        upstream.onNext(-5)
+        upstream.onNext(-5) // this will trigger failure of next requestOne (pull)
         lastEvents() should be(Set(OnNext(99)))
 
-        downstream.requestOne()
-        lastEvents() should be(Set.empty)
-
+        downstream.requestOne() // this failed, but resume will pull
+        lastEvents() should be(Set(RequestOne))
         downstream.requestOne()
         lastEvents() should be(Set(RequestOne))
 
         upstream.onNext(3)
         lastEvents() should be(Set(OnNext(104)))
       }
+    }
+
+    "resume failing onPull" in {
+      val stage = new PushPullStage[Int, Int] {
+        var n = 0
+        var lastElem = 0
+        def onPush(elem: Int, ctx: Context[Int]): Directive = {
+          n = 3
+          lastElem = elem
+          ctx.push(elem)
+        }
+
+        override def onPull(ctx: Context[Int]): Directive = {
+          if (n == 0)
+            ctx.pull()
+          else {
+            n -= 1
+            if (n == 1) throw TE
+            ctx.push(lastElem)
+          }
+        }
+
+        override def decide(t: Throwable): Supervision.Directive = Supervision.Resume
+      }
+
+      new TestSetup(Seq(
+        Map((x: Int) ⇒ x + 1, restartingDecider),
+        stage,
+        Map((x: Int) ⇒ x + 100, restartingDecider))) {
+
+        lastEvents() should be(Set.empty)
+
+        downstream.requestOne()
+        lastEvents() should be(Set(RequestOne))
+        upstream.onNext(2)
+        lastEvents() should be(Set(OnNext(103)))
+
+        downstream.requestOne()
+        lastEvents() should be(Set(OnNext(103)))
+
+        downstream.requestOne()
+        lastEvents() should be(Set(RequestOne))
+      }
+    }
+
+    "restart when conflate `seed` throws" in new TestSetup(Seq(Conflate(
+      (seed: Int) ⇒ if (seed == 1) throw TE else seed,
+      (agg: Int, x: Int) ⇒ agg + x,
+      restartingDecider))) {
+
+      lastEvents() should be(Set(RequestOne))
+
+      downstream.requestOne()
+      lastEvents() should be(Set.empty)
+
+      upstream.onNext(0)
+      lastEvents() should be(Set(OnNext(0), RequestOne))
+
+      upstream.onNext(1) // boom
+      lastEvents() should be(Set(RequestOne))
+
+      upstream.onNext(2)
+      lastEvents() should be(Set(RequestOne))
+
+      upstream.onNext(10)
+      lastEvents() should be(Set(RequestOne))
+
+      downstream.requestOne()
+      lastEvents() should be(Set(OnNext(12))) // note that 1 has been discarded
+
+      downstream.requestOne()
+      lastEvents() should be(Set.empty)
+    }
+
+    "restart when conflate `aggregate` throws" in new TestSetup(Seq(Conflate(
+      (seed: Int) ⇒ seed,
+      (agg: Int, x: Int) ⇒ if (x == 2) throw TE else agg + x,
+      restartingDecider))) {
+
+      lastEvents() should be(Set(RequestOne))
+
+      downstream.requestOne()
+      lastEvents() should be(Set.empty)
+
+      upstream.onNext(0)
+      lastEvents() should be(Set(OnNext(0), RequestOne))
+
+      upstream.onNext(1)
+      lastEvents() should be(Set(RequestOne))
+
+      upstream.onNext(2) // boom
+      lastEvents() should be(Set(RequestOne))
+
+      upstream.onNext(10)
+      lastEvents() should be(Set(RequestOne))
+
+      downstream.requestOne()
+      lastEvents() should be(Set(OnNext(10))) // note that 1 and 2 has been discarded
+
+      downstream.requestOne()
+      lastEvents() should be(Set.empty)
+
+      upstream.onNext(4)
+      lastEvents() should be(Set(OnNext(4), RequestOne))
+
+      downstream.cancel()
+      lastEvents() should be(Set(Cancel))
     }
 
     "work with keep-going ops" in pending

@@ -20,10 +20,11 @@ class FlowSupervisionSpec extends AkkaSpec {
 
   val exc = new RuntimeException("simulated exc") with NoStackTrace
 
-  val failingMap = Flow.empty[Int].map(n ⇒ if (n == 3) throw exc else n)
+  val failingMap = (s: Source[Int]) => s.map(n ⇒ if (n == 3) throw exc else n)
 
-  def run(flow: Flow[Int, Int]): immutable.Seq[Int] =
-    Await.result(Source(1 to 5).via(flow).grouped(1000).runWith(Sink.head), 3.seconds)
+  // FIXME this would be more elegant with Flow[Int, Int] and `via`, but `via` is currently not propagating the OperationAttributes
+  def run(s: Source[Int] => Source[Int]): immutable.Seq[Int] =
+    Await.result(s(Source(1 to 5)).grouped(1000).runWith(Sink.head), 3.seconds)
 
   "Stream supervision" must {
 
@@ -34,10 +35,12 @@ class FlowSupervisionSpec extends AkkaSpec {
     }
 
     "support resume " in {
-      pending // FIXME the ops attributes are not propagated
-      val result = run(Flow.empty[Int].section(supervisionStrategy(Supervision.resumingDecider))(_.via(failingMap)))
+      val result = run(s => s.section(supervisionStrategy(Supervision.resumingDecider))(
+        failingMap(_)))
       result should be(List(1, 2, 4, 5))
     }
+
+    // FIXME write more "real" tests, when "Unified stream representation" is merged
 
   }
 }

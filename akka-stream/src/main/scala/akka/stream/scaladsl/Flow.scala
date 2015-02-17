@@ -75,8 +75,11 @@ trait Flow[-In, +Out] extends FlowOps[Out] {
   /**
    * Applies given [[OperationAttributes]] to a given section.
    */
-  def section[I <: In, O](attributes: OperationAttributes)(section: Flow[In, Out] ⇒ Flow[I, O]): Flow[I, O] =
-    section(this.withAttributes(attributes)).withAttributes(OperationAttributes.none)
+  def section[I <: In, O](attributes: OperationAttributes)(section: Flow[In, Out] ⇒ Flow[I, O]): Flow[I, O] = {
+    val s = section(this.withAttributes(attributes))
+    println(s"# section:  ${this.withAttributes(attributes)} --> $s --> ${s.withAttributes(OperationAttributes.none)}") // FIXME
+    s.withAttributes(OperationAttributes.none)
+  }
 
 }
 
